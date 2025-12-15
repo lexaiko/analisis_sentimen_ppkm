@@ -5,13 +5,29 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
 class TextPreprocessor:
-    def __init__(self):
+    def __init__(self, use_stemming=False):
         # Inisialisasi stemmer dan stopword remover
-        factory_stemmer = StemmerFactory()
-        self.stemmer = factory_stemmer.create_stemmer()
+        self.use_stemming = use_stemming
         
+        if use_stemming:
+            factory_stemmer = StemmerFactory()
+            self.stemmer = factory_stemmer.create_stemmer()
+        else:
+            self.stemmer = None
+        
+        # Kata-kata penting yang tidak boleh dihapus (negasi, intensifier, dll)
+        self.important_words = {
+            'tidak', 'bukan', 'jangan', 'belum', 'tanpa', 
+            'kurang', 'sangat', 'sekali', 'amat', 'terlalu',
+            'lebih', 'paling', 'hanya', 'saja', 'bahkan'
+        }
+        
+        # Get stopwords dari Sastrawi
         factory_stopword = StopWordRemoverFactory()
-        self.stopword_remover = factory_stopword.create_stop_word_remover()
+        self.base_stopwords = set(factory_stopword.get_stop_words())
+        
+        # Remove kata-kata penting dari stopword list
+        self.stopwords = self.base_stopwords - self.important_words
         
     def clean_text(self, text):
         """
@@ -45,15 +61,19 @@ class TextPreprocessor:
     
     def remove_stopwords(self, text):
         """
-        Menghapus stopwords dari teks
+        Menghapus stopwords dari teks, tapi tetap pertahankan kata-kata penting
         """
-        return self.stopword_remover.remove(text)
+        words = text.split()
+        filtered_words = [word for word in words if word not in self.stopwords]
+        return ' '.join(filtered_words)
     
     def stem_text(self, text):
         """
         Melakukan stemming pada teks
         """
-        return self.stemmer.stem(text)
+        if self.use_stemming and self.stemmer:
+            return self.stemmer.stem(text)
+        return text
     
     def preprocess(self, text):
         """
@@ -75,6 +95,7 @@ class TextPreprocessor:
         Preprocessing untuk dataframe
         """
         df = df.copy()
+        print(f"Processing {len(df)} tweets...")
         df['cleaned_text'] = df[text_column].apply(self.preprocess)
         
         # Hapus baris dengan teks kosong setelah preprocessing

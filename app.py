@@ -57,7 +57,8 @@ def load_model():
             model = pickle.load(f)
         with open('models/vectorizer.pkl', 'rb') as f:
             vectorizer = pickle.load(f)
-        preprocessor = TextPreprocessor()
+        # Disable stemming untuk performa lebih cepat
+        preprocessor = TextPreprocessor(use_stemming=False)
         return model, vectorizer, preprocessor
     except Exception as e:
         st.error(f"Error loading model: {e}")

@@ -3,6 +3,7 @@ import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
@@ -12,6 +13,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from preprocessing import TextPreprocessor
 
+# Buat folder models jika belum ada
+os.makedirs('models', exist_ok=True)
+
 class SentimentClassifier:
     def __init__(self, model_type='logistic'):
         """
@@ -19,7 +23,8 @@ class SentimentClassifier:
         """
         self.model_type = model_type
         self.vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2))
-        self.preprocessor = TextPreprocessor()
+        # Disable stemming untuk performa lebih cepat (stemming sangat lambat untuk dataset besar)
+        self.preprocessor = TextPreprocessor(use_stemming=False)
         
         # Inisialisasi model
         if model_type == 'naive_bayes':
@@ -33,12 +38,24 @@ class SentimentClassifier:
         else:
             raise ValueError("Model type tidak valid")
     
-    def load_and_preprocess_data(self, filepath):
+    def load_and_preprocess_data(self, filepath, augmented_filepaths=None):
         """
         Load dan preprocess data
         """
         print("Loading data...")
         df = pd.read_csv(filepath, sep='\t')
+        
+        # Load augmented data jika ada (bisa multiple files)
+        if augmented_filepaths:
+            if isinstance(augmented_filepaths, str):
+                augmented_filepaths = [augmented_filepaths]
+            
+            for aug_file in augmented_filepaths:
+                if os.path.exists(aug_file):
+                    print(f"Loading augmented data from {aug_file}...")
+                    df_aug = pd.read_csv(aug_file, sep='\t')
+                    df = pd.concat([df, df_aug], ignore_index=True)
+                    print(f"  Added {len(df_aug)} samples")
         
         print(f"Total data: {len(df)}")
         print(f"Distribusi label:\n{df['sentiment'].value_counts()}\n")
@@ -50,6 +67,61 @@ class SentimentClassifier:
         print(f"Distribusi label setelah preprocessing:\n{df_clean['sentiment'].value_counts()}\n")
         
         return df_clean
+    
+    def balance_data(self, df, strategy='combined'):
+        """
+        Balance data dengan undersampling dan/atau oversampling
+        strategy: 'undersample', 'oversample', 'combined'
+        """
+        print(f"Balancing data dengan strategy: {strategy}")
+        
+        # Pisahkan berdasarkan label
+        df_pos = df[df['sentiment'] == 0]  # Positif
+        df_net = df[df['sentiment'] == 1]  # Netral
+        df_neg = df[df['sentiment'] == 2]  # Negatif
+        
+        print(f"Sebelum balancing:")
+        print(f"  Positif : {len(df_pos)}")
+        print(f"  Netral  : {len(df_net)}")
+        print(f"  Negatif : {len(df_neg)}")
+        
+        if strategy == 'undersample':
+            # Undersample netral ke jumlah rata-rata
+            target_size = (len(df_pos) + len(df_neg)) // 2
+            df_net_balanced = df_net.sample(n=min(target_size * 2, len(df_net)), random_state=42)
+            df_balanced = pd.concat([df_pos, df_net_balanced, df_neg], ignore_index=True)
+            
+        elif strategy == 'oversample':
+            # Oversample positif dan negatif
+            target_size = len(df_net)
+            df_pos_balanced = df_pos.sample(n=target_size, replace=True, random_state=42)
+            df_neg_balanced = df_neg.sample(n=target_size, replace=True, random_state=42)
+            df_balanced = pd.concat([df_pos_balanced, df_net, df_neg_balanced], ignore_index=True)
+            
+        elif strategy == 'combined':
+            # Kombinasi: undersample netral + oversample positif & negatif
+            # Target: buat distribusi lebih seimbang
+            target_size = max(len(df_pos), len(df_neg)) * 2
+            
+            # Undersample netral
+            df_net_balanced = df_net.sample(n=min(target_size, len(df_net)), random_state=42)
+            
+            # Oversample positif dan negatif
+            df_pos_balanced = df_pos.sample(n=target_size, replace=True, random_state=42)
+            df_neg_balanced = df_neg.sample(n=target_size, replace=True, random_state=42)
+            
+            df_balanced = pd.concat([df_pos_balanced, df_net_balanced, df_neg_balanced], ignore_index=True)
+        
+        # Shuffle
+        df_balanced = df_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
+        
+        print(f"\nSetelah balancing:")
+        print(f"  Positif : {len(df_balanced[df_balanced['sentiment'] == 0])}")
+        print(f"  Netral  : {len(df_balanced[df_balanced['sentiment'] == 1])}")
+        print(f"  Negatif : {len(df_balanced[df_balanced['sentiment'] == 2])}")
+        print(f"  Total   : {len(df_balanced)}\n")
+        
+        return df_balanced
     
     def train(self, X_train, y_train):
         """
@@ -191,11 +263,21 @@ def compare_models(df, test_size=0.2):
 if __name__ == "__main__":
     # Load dan preprocess data
     classifier = SentimentClassifier(model_type='logistic')
-    df = classifier.load_and_preprocess_data('data/INA_TweetsPPKM_Labeled_Pure.csv')
+    df = classifier.load_and_preprocess_data(
+        'data/INA_TweetsPPKM_Labeled_Pure.csv',
+        augmented_filepaths=[
+            'data/augmented_data.csv',
+            'data/positive_augmented_2000.csv',
+            'data/negative_augmented_1500.csv'
+        ]
+    )
+    
+    # Balance data untuk mengatasi class imbalance
+    df_balanced = classifier.balance_data(df, strategy='combined')
     
     # Split data
-    X = df['cleaned_text']
-    y = df['sentiment']
+    X = df_balanced['cleaned_text']
+    y = df_balanced['sentiment']
     
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
